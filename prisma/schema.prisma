@@ -1,0 +1,247 @@
+// SHOGO:CUSTOM-START prisma-header
+// Managed by Shogo. Do not add a datasource `url` or change the generator `provider` — the database URL is configured in prisma.config.ts (Prisma 7+).
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+// SHOGO:CUSTOM-END
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+// ──────────────────────────────────────────────────────
+// ZUXURU — Business Visibility Operating System
+// Core data spine:
+// BUSINESS -> INVESTIGATION -> EVIDENCE -> VERIFICATION -> FINDING
+// -> SCORE -> OPPORTUNITY -> RECOMMENDATION/ACTION -> EXECUTION
+// -> RESULT -> NEW EVIDENCE -> NEW SCORE
+// ──────────────────────────────────────────────────────
+
+model Business {
+  id          String   @id @default(cuid())
+  name        String
+  location    String?
+  category    String?
+  website     String?
+  phase       String   @default("public") // public | connected | monitoring
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  evidence     Evidence[]
+  findings     Finding[]
+  scores       ScoreSnapshot[]
+  opportunities Opportunity[]
+  actions      Action[]
+  connections  Connection[]
+  auditEvents  AuditEvent[]
+  contentAssets ContentAsset[]
+  publishingJobs PublishingJob[]
+
+  @@map("businesses")
+}
+
+// Normalized output of the Investigation Engine (Agent-Reach, Maigret,
+// Maps MCP, Website/Search Intelligence — simulated in this build but
+// structured to match the real evidence contract).
+model Evidence {
+  id                  String   @id @default(cuid())
+  businessId          String
+  business            Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  source              String   // agent_reach | maigret | maps_mcp | website_intelligence | search_intelligence
+  sourceType           String  // web | social | listing | website | search
+  platform             String?
+  url                  String?
+  title                String?
+  dimension            String  // discoverability | clarity | trust | activity | consistency | conversion
+  rawFinding           String  // JSON string of raw payload
+  normalizedFinding    String  // human readable normalized finding
+  verificationStatus   String  @default("candidate") // candidate | verified | rejected
+  confidence           Float   @default(0)
+  retrievedAt          DateTime @default(now())
+  createdAt            DateTime @default(now())
+
+  @@index([businessId])
+  @@map("evidence")
+}
+
+// Verified gaps / problems detected by the Intelligence Engine.
+model Finding {
+  id              String    @id @default(cuid())
+  businessId      String
+  business        Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  dimension       String
+  severity        String    // low | medium | high | critical
+  description     String
+  evidenceIds     String    @default("[]") // JSON array of evidence ids
+  dedupKey        String    // hash of businessId+dimension+signature, used to collapse repeats
+  status          String    @default("open") // open | reviewed | false_positive | resolved
+  occurrenceCount Int       @default(1) // how many rescans re-detected this same finding
+  lastSeenAt      DateTime  @default(now())
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  reviewNote      String?
+  createdAt       DateTime  @default(now())
+
+  @@index([businessId])
+  @@index([dedupKey])
+  @@map("findings")
+}
+
+// Score History — proof of progress over time (27 -> 39 -> 52 -> 67)
+model ScoreSnapshot {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  phase           String   // public | connected | monitoring
+  overall         Float
+  discoverability Float
+  clarity         Float
+  trust           Float
+  activity        Float
+  consistency     Float
+  conversion      Float
+  aiVisibility    Float    @default(0)
+  note            String?
+  createdAt       DateTime @default(now())
+
+  @@index([businessId])
+  @@map("score_snapshots")
+}
+
+// Opportunity Engine output, ranked by Impact x Confidence x Relevance / Effort
+model Opportunity {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  title           String
+  description     String
+  dimension       String
+  impact          Float
+  confidence      Float
+  relevance       Float
+  effort          Float
+  rankScore       Float
+  expectedOutcome String   @default("")
+  status          String   @default("open") // open | actioned | dismissed
+  createdAt       DateTime @default(now())
+
+  actions     Action[]
+
+  @@index([businessId])
+  @@map("opportunities")
+}
+
+// Recommendation -> Action -> Execution lifecycle, gated by approval policy.
+model Action {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  opportunityId   String
+  opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  title           String
+  description     String
+  automationLevel String   // green | yellow | red
+  status          String   @default("draft") // draft | pending_approval | approved | executing | executed | failed
+  approvedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  executions      ExecutionRecord[]
+
+  @@index([businessId])
+  @@index([opportunityId])
+  @@map("actions")
+}
+
+model ExecutionRecord {
+  id              String   @id @default(cuid())
+  actionId        String
+  action          Action   @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  businessId      String
+  status          String   // success | failed
+  resultSummary   String
+  externalRef     String?
+  measuredImpact  String?  // JSON string
+  executedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([actionId])
+  @@map("execution_records")
+}
+
+// Simulated Connection / Permission Engine
+model Connection {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  platform       String
+  connected      Boolean  @default(true)
+  accountHandle  String?
+  connectedAt    DateTime @default(now())
+
+  @@index([businessId])
+  @@map("connections")
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type       String
+  payload    String?
+  createdAt  DateTime @default(now())
+
+  @@index([businessId])
+  @@map("audit_events")
+}
+
+// Creation Studio — OPPORTUNITY -> CREATIVE BRIEF -> STUDIO/COMFYUI -> ASSET -> APPROVAL -> PUBLISH
+model ContentAsset {
+  id            String   @id @default(cuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  opportunityId String?
+  assetType     String   // image | social_post | reel | website_copy
+  brief         String
+  title         String
+  body          String
+  previewUrl    String?
+  status        String   @default("draft") // draft | generated | approved | published | rejected
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  publishingJobs PublishingJob[]
+
+  @@index([businessId])
+  @@map("content_assets")
+}
+
+// Distribution / Publishing Engine — behind the Execution boundary (simulated Postiz)
+model PublishingJob {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contentAssetId String
+  contentAsset   ContentAsset @relation(fields: [contentAssetId], references: [id], onDelete: Cascade)
+  platform       String
+  status         String   @default("queued") // queued | published | failed
+  externalPostId String?
+  externalUrl    String?
+  publishedAt    DateTime?
+  error          String?
+  createdAt      DateTime @default(now())
+
+  @@index([businessId])
+  @@index([contentAssetId])
+  @@map("publishing_jobs")
+}
